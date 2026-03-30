@@ -1,0 +1,17 @@
+version: 1.0
+runtime: corretto11
+
+build:
+  commands:
+    pre-build:
+      - java --version
+    build:
+      - ./gradlew build -x test
+
+run:
+  command: java -jar build/libs/app.jar
+  network:
+    port: 5000
+  env:
+    - name: SERVER_PORT
+      value: "5000"
