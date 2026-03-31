@@ -1,0 +1,239 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: App Runner 배포 알림 - 서비스별 이메일 매핑 (DynamoDB + SES)
+
+Parameters:
+  SenderEmail:
+    Type: String
+    Description: SES에서 발신자로 사용할 인증된 이메일 주소
+
+Resources:
+
+  # 서비스별 이메일 매핑 테이블
+  ServiceEmailTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: apprunner-notification-config
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: ServiceArn
+          AttributeType: S
+      KeySchema:
+        - AttributeName: ServiceArn
+          KeyType: HASH
+
+  # Lambda 실행 역할
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: apprunner-deploy-notify-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: DeployNotifyPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+              - Effect: Allow
+                Action:
+                  - logs:GetLogEvents
+                  - logs:DescribeLogStreams
+                  - logs:FilterLogEvents
+                Resource: arn:aws:logs:*:*:log-group:/aws/apprunner/*
+              - Effect: Allow
+                Action:
+                  - ses:SendEmail
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                Resource: !GetAtt ServiceEmailTable.Arn
+              - Effect: Allow
+                Action:
+                  - apprunner:DescribeService
+                Resource: '*'
+
+  # Lambda 함수
+  DeployNotificationFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: apprunner-deploy-notification
+      Runtime: python3.11
+      Handler: index.handler
+      Timeout: 60
+      MemorySize: 256
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref ServiceEmailTable
+          SENDER_EMAIL: !Ref SenderEmail
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import os
+          from datetime import datetime, timedelta
+
+          ses = boto3.client('ses')
+          logs = boto3.client('logs')
+          dynamodb = boto3.resource('dynamodb')
+          apprunner = boto3.client('apprunner')
+
+          TABLE_NAME = os.environ['TABLE_NAME']
+          SENDER_EMAIL = os.environ['SENDER_EMAIL']
+          table = dynamodb.Table(TABLE_NAME)
+
+          def handler(event, context):
+              print(json.dumps(event))
+
+              detail = event.get('detail', {})
+              status = detail.get('operationStatus', '')
+              service_arn = detail.get('serviceArn', '')
+              operation_id = detail.get('operationId', 'unknown')
+              now = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
+
+              if not service_arn:
+                  print('serviceArn 없음, 무시')
+                  return {'statusCode': 200}
+
+              # DynamoDB에서 이메일 조회
+              resp = table.get_item(Key={'ServiceArn': service_arn})
+              item = resp.get('Item')
+              if not item or not item.get('Email'):
+                  print(f'매핑 없음: {service_arn}')
+                  return {'statusCode': 200}
+
+              recipient = item['Email']
+
+              # 서비스 정보 조회
+              service_name = 'unknown'
+              service_url = ''
+              try:
+                  svc_resp = apprunner.describe_service(ServiceArn=service_arn)
+                  svc = svc_resp['Service']
+                  service_name = svc.get('ServiceName', 'unknown')
+                  service_url = svc.get('ServiceUrl', '')
+              except Exception as e:
+                  print(f'서비스 조회 실패: {e}')
+
+              service_id = service_arn.split('/')[-1] if '/' in service_arn else 'unknown'
+
+              if status in ['IN_PROGRESS', 'CreateServiceInProgress', 'DeploymentInProgress']:
+                  subject = f'[배포 시작] {service_name}'
+                  body = (
+                      f'App Runner 배포가 시작되었습니다.\n\n'
+                      f'서비스: {service_name}\n'
+                      f'서비스 URL: https://{service_url}\n'
+                      f'Operation ID: {operation_id}\n'
+                      f'시작 시간: {now}\n'
+                  )
+                  send_email(recipient, subject, body)
+
+              elif any(k in status.upper() for k in ['SUCCEEDED', 'FAILED', 'COMPLETED']):
+                  is_success = 'FAIL' not in status.upper() and 'ERROR' not in status.upper()
+                  result_text = '성공' if is_success else '실패'
+
+                  event_logs = get_recent_logs(
+                      f'/aws/apprunner/{service_name}/{service_id}/service', 30)
+                  app_logs = get_recent_logs(
+                      f'/aws/apprunner/{service_name}/{service_id}/application', 50)
+
+                  subject = f'[배포 {result_text}] {service_name}'
+                  body = (
+                      f'App Runner 배포가 완료되었습니다.\n\n'
+                      f'서비스: {service_name}\n'
+                      f'서비스 URL: https://{service_url}\n'
+                      f'결과: {result_text}\n'
+                      f'Operation ID: {operation_id}\n'
+                      f'완료 시간: {now}\n'
+                      f'\n{"="*60}\n'
+                      f'Runner 이벤트 로그 (최근 30건)\n'
+                      f'{"="*60}\n'
+                      f'{event_logs}\n'
+                      f'\n{"="*60}\n'
+                      f'애플리케이션 로그 (최근 50건)\n'
+                      f'{"="*60}\n'
+                      f'{app_logs}\n'
+                  )
+                  send_email(recipient, subject, body)
+
+              return {'statusCode': 200}
+
+          def get_recent_logs(log_group, limit):
+              try:
+                  end_time = int(datetime.utcnow().timestamp() * 1000)
+                  start_time = int((datetime.utcnow() - timedelta(minutes=30)).timestamp() * 1000)
+                  resp = logs.filter_log_events(
+                      logGroupName=log_group,
+                      startTime=start_time,
+                      endTime=end_time,
+                      limit=limit,
+                      interleaved=True
+                  )
+                  lines = []
+                  for evt in resp.get('events', []):
+                      ts = datetime.utcfromtimestamp(evt['timestamp'] / 1000).strftime('%H:%M:%S')
+                      msg = evt.get('message', '').strip()
+                      lines.append(f'[{ts}] {msg}')
+                  return '\n'.join(lines) if lines else '(로그 없음)'
+              except logs.exceptions.ResourceNotFoundException:
+                  return '(로그 그룹을 찾을 수 없음)'
+              except Exception as e:
+                  return f'(로그 조회 실패: {e})'
+
+          def send_email(recipient, subject, body):
+              try:
+                  ses.send_email(
+                      Source=SENDER_EMAIL,
+                      Destination={'ToAddresses': [recipient]},
+                      Message={
+                          'Subject': {'Data': subject, 'Charset': 'UTF-8'},
+                          'Body': {'Text': {'Data': body, 'Charset': 'UTF-8'}}
+                      }
+                  )
+                  print(f'이메일 전송: {recipient} - {subject}')
+              except Exception as e:
+                  print(f'이메일 전송 실패: {e}')
+
+  # EventBridge → Lambda 호출 권한
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref DeployNotificationFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt DeployEventRule.Arn
+
+  # EventBridge 규칙
+  DeployEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: apprunner-deploy-events
+      Description: 모든 App Runner 배포 이벤트 감지
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.apprunner
+        detail-type:
+          - AppRunner Service Operation Status Change
+      Targets:
+        - Arn: !GetAtt DeployNotificationFunction.Arn
+          Id: DeployNotificationTarget
+
+Outputs:
+  DynamoDBTableName:
+    Description: 서비스-이메일 매핑 테이블
+    Value: !Ref ServiceEmailTable
+  LambdaFunctionArn:
+    Description: Lambda 함수 ARN
+    Value: !GetAtt DeployNotificationFunction.Arn
