@@ -98,9 +98,14 @@ Resources:
 
               detail = event.get('detail', {})
               status = detail.get('operationStatus', '')
-              service_arn = detail.get('serviceArn', '')
               operation_id = detail.get('operationId', 'unknown')
               now = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
+
+              # serviceArn은 detail 또는 resources에서 가져옴
+              service_arn = detail.get('serviceArn', '')
+              if not service_arn:
+                  resources = event.get('resources', [])
+                  service_arn = resources[0] if resources else ''
 
               if not service_arn:
                   print('serviceArn 없음, 무시')
@@ -128,7 +133,9 @@ Resources:
 
               service_id = service_arn.split('/')[-1] if '/' in service_arn else 'unknown'
 
-              if status in ['IN_PROGRESS', 'CreateServiceInProgress', 'DeploymentInProgress']:
+              status_upper = status.upper()
+
+              if any(k in status_upper for k in ['STARTED', 'IN_PROGRESS', 'INPROGRESS']):
                   subject = f'[배포 시작] {service_name}'
                   body = (
                       f'App Runner 배포가 시작되었습니다.\n\n'
@@ -139,8 +146,8 @@ Resources:
                   )
                   send_email(recipient, subject, body)
 
-              elif any(k in status.upper() for k in ['SUCCEEDED', 'FAILED', 'COMPLETED']):
-                  is_success = 'FAIL' not in status.upper() and 'ERROR' not in status.upper()
+              elif any(k in status_upper for k in ['SUCCEEDED', 'FAILED', 'COMPLETED']):
+                  is_success = 'FAIL' not in status_upper and 'ERROR' not in status_upper
                   result_text = '성공' if is_success else '실패'
 
                   event_logs = get_recent_logs(
