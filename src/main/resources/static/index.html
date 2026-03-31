@@ -3,54 +3,60 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>화면 캡쳐 번역기</title>
+    <title>채팅 번역기</title>
     <link rel="stylesheet" href="/css/style.css">
-    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 </head>
 <body>
     <div class="container">
-        <h1>📸 화면 캡쳐 번역기</h1>
-        <p class="subtitle">
-            <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>X</kbd> 또는 아래 버튼으로 화면을 캡쳐하세요
-        </p>
+        <h1>💬 채팅 번역기</h1>
+        <p class="subtitle">텍스트를 붙여넣거나, 화면을 캡쳐해서 번역하세요</p>
 
-        <div class="actions">
-            <button id="captureBtn" class="btn btn-primary">📷 화면 캡쳐</button>
-            <label class="btn btn-secondary" for="fileInput">📁 이미지 업로드</label>
-            <input type="file" id="fileInput" accept="image/*" hidden>
+        <div class="tabs">
+            <button class="tab active" data-tab="paste">📋 텍스트 붙여넣기</button>
+            <button class="tab" data-tab="capture">📷 화면 캡쳐</button>
         </div>
 
-        <div class="lang-select">
-            <label for="sourceLang">원본 언어:</label>
-            <select id="sourceLang">
-                <option value="auto">자동 감지</option>
-                <option value="en">영어</option>
-                <option value="ja">일본어</option>
-                <option value="zh-CN">중국어(간체)</option>
-                <option value="zh-TW">중국어(번체)</option>
-                <option value="fr">프랑스어</option>
-                <option value="de">독일어</option>
-                <option value="es">스페인어</option>
-                <option value="pt">포르투갈어</option>
-                <option value="ru">러시아어</option>
-                <option value="vi">베트남어</option>
-                <option value="th">태국어</option>
-            </select>
+        <!-- 텍스트 붙여넣기 탭 -->
+        <div id="pasteTab" class="tab-content active">
+            <textarea id="inputText" placeholder="번역할 텍스트를 붙여넣으세요 (Ctrl+V)&#10;&#10;또는 직접 입력하세요..." rows="6"></textarea>
+            <div class="lang-row">
+                <select id="sourceLang">
+                    <option value="auto">자동 감지</option>
+                    <option value="en">영어</option>
+                    <option value="ja">일본어</option>
+                    <option value="zh-CN">중국어(간체)</option>
+                    <option value="zh-TW">중국어(번체)</option>
+                    <option value="fr">프랑스어</option>
+                    <option value="de">독일어</option>
+                    <option value="es">스페인어</option>
+                    <option value="ru">러시아어</option>
+                    <option value="vi">베트남어</option>
+                    <option value="th">태국어</option>
+                </select>
+                <button id="translateBtn" class="btn btn-primary">번역하기</button>
+            </div>
         </div>
 
-        <div id="preview" class="preview" style="display:none;">
-            <h3>캡쳐된 이미지</h3>
-            <canvas id="canvas"></canvas>
+        <!-- 화면 캡쳐 탭 -->
+        <div id="captureTab" class="tab-content">
+            <div class="actions">
+                <button id="captureBtn" class="btn btn-primary">📷 화면 캡쳐 (Ctrl+Shift+X)</button>
+                <label class="btn btn-secondary" for="fileInput">📁 이미지 업로드</label>
+                <input type="file" id="fileInput" accept="image/*" hidden>
+            </div>
+            <div id="preview" class="preview" style="display:none;">
+                <canvas id="canvas"></canvas>
+            </div>
         </div>
 
         <div id="loading" class="loading" style="display:none;">
             <div class="spinner"></div>
-            <p id="loadingText">텍스트 인식 중...</p>
+            <p id="loadingText">번역 중...</p>
         </div>
 
         <div id="result" class="result" style="display:none;">
             <div class="result-box">
-                <h3>🔍 인식된 텍스트 (원문)</h3>
+                <h3>🔍 원문</h3>
                 <pre id="originalText"></pre>
             </div>
             <div class="result-box translated">
@@ -66,6 +72,7 @@
         <div id="selection" class="selection"></div>
     </div>
 
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
     <script src="/js/app.js"></script>
 </body>
 </html>

@@ -1,15 +1,42 @@
+// 탭 전환
+document.querySelectorAll('.tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+        tab.classList.add('active');
+        document.getElementById(tab.dataset.tab + 'Tab').classList.add('active');
+    });
+});
+
+const inputText = document.getElementById('inputText');
+const translateBtn = document.getElementById('translateBtn');
 const captureBtn = document.getElementById('captureBtn');
 const fileInput = document.getElementById('fileInput');
-const preview = document.getElementById('preview');
 const canvas = document.getElementById('canvas');
+const preview = document.getElementById('preview');
 const loading = document.getElementById('loading');
 const loadingText = document.getElementById('loadingText');
 const result = document.getElementById('result');
 const originalText = document.getElementById('originalText');
 const translatedText = document.getElementById('translatedText');
-const sourceLangSelect = document.getElementById('sourceLang');
+const sourceLang = document.getElementById('sourceLang');
 
-// 단축키: Ctrl+Shift+X
+// 텍스트 번역 (메인 기능)
+translateBtn.addEventListener('click', () => {
+    const text = inputText.value.trim();
+    if (!text) return;
+    doTranslate(text);
+});
+
+// Ctrl+Enter로도 번역
+inputText.addEventListener('keydown', (e) => {
+    if (e.ctrlKey && e.key === 'Enter') {
+        e.preventDefault();
+        translateBtn.click();
+    }
+});
+
+// Ctrl+Shift+X 화면 캡쳐
 document.addEventListener('keydown', (e) => {
     if (e.ctrlKey && e.shiftKey && e.key === 'X') {
         e.preventDefault();
@@ -33,29 +60,47 @@ fileInput.addEventListener('change', (e) => {
     img.src = URL.createObjectURL(file);
 });
 
+async function doTranslate(text) {
+    loading.style.display = 'block';
+    loadingText.textContent = '번역 중...';
+    result.style.display = 'none';
+
+    try {
+        const res = await fetch('/api/translate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text, sourceLang: sourceLang.value })
+        });
+        const data = await res.json();
+        loading.style.display = 'none';
+        result.style.display = 'block';
+        originalText.textContent = text;
+        translatedText.textContent = data.error ? '오류: ' + data.error : data.translated;
+    } catch (err) {
+        loading.style.display = 'none';
+        alert('번역 실패: ' + err.message);
+    }
+}
+
+
+// 화면 캡쳐
 async function startCapture() {
     try {
-        const stream = await navigator.mediaDevices.getDisplayMedia({
-            video: { mediaSource: 'screen' }
-        });
+        const stream = await navigator.mediaDevices.getDisplayMedia({ video: { mediaSource: 'screen' } });
         const video = document.createElement('video');
         video.srcObject = stream;
         await video.play();
-
-        // 프레임 캡쳐 후 스트림 종료
         await new Promise(r => setTimeout(r, 300));
+
         const tempCanvas = document.createElement('canvas');
         tempCanvas.width = video.videoWidth;
         tempCanvas.height = video.videoHeight;
         tempCanvas.getContext('2d').drawImage(video, 0, 0);
         stream.getTracks().forEach(t => t.stop());
 
-        // 크롭 UI 표시
         showCropOverlay(tempCanvas);
     } catch (err) {
-        if (err.name !== 'AbortError') {
-            alert('화면 캡쳐에 실패했습니다. 브라우저 권한을 확인해주세요.');
-        }
+        if (err.name !== 'AbortError') alert('화면 캡쳐 실패. 브라우저 권한을 확인하세요.');
     }
 }
 
@@ -66,10 +111,8 @@ function showCropOverlay(sourceCanvas) {
 
     cropCanvas.width = window.innerWidth;
     cropCanvas.height = window.innerHeight;
-
     const ctx = cropCanvas.getContext('2d');
     ctx.drawImage(sourceCanvas, 0, 0, window.innerWidth, window.innerHeight);
-    // 어두운 오버레이
     ctx.fillStyle = 'rgba(0,0,0,0.5)';
     ctx.fillRect(0, 0, cropCanvas.width, cropCanvas.height);
 
@@ -78,136 +121,70 @@ function showCropOverlay(sourceCanvas) {
 
     let startX, startY, dragging = false;
 
-    function onMouseDown(e) {
-        startX = e.clientX;
-        startY = e.clientY;
-        dragging = true;
+    function onDown(e) {
+        startX = e.clientX; startY = e.clientY; dragging = true;
         selection.style.display = 'block';
-        selection.style.left = startX + 'px';
-        selection.style.top = startY + 'px';
-        selection.style.width = '0px';
-        selection.style.height = '0px';
+        Object.assign(selection.style, { left: startX+'px', top: startY+'px', width: '0', height: '0' });
     }
-
-    function onMouseMove(e) {
+    function onMove(e) {
         if (!dragging) return;
-        const x = Math.min(e.clientX, startX);
-        const y = Math.min(e.clientY, startY);
-        const w = Math.abs(e.clientX - startX);
-        const h = Math.abs(e.clientY - startY);
-        selection.style.left = x + 'px';
-        selection.style.top = y + 'px';
-        selection.style.width = w + 'px';
-        selection.style.height = h + 'px';
+        const x = Math.min(e.clientX, startX), y = Math.min(e.clientY, startY);
+        const w = Math.abs(e.clientX - startX), h = Math.abs(e.clientY - startY);
+        Object.assign(selection.style, { left: x+'px', top: y+'px', width: w+'px', height: h+'px' });
     }
-
-    function onMouseUp(e) {
+    function onUp(e) {
         if (!dragging) return;
         dragging = false;
-
-        const x = Math.min(e.clientX, startX);
-        const y = Math.min(e.clientY, startY);
-        const w = Math.abs(e.clientX - startX);
-        const h = Math.abs(e.clientY - startY);
-
+        const x = Math.min(e.clientX, startX), y = Math.min(e.clientY, startY);
+        const w = Math.abs(e.clientX - startX), h = Math.abs(e.clientY - startY);
         overlay.style.display = 'none';
-        overlay.removeEventListener('mousedown', onMouseDown);
-        overlay.removeEventListener('mousemove', onMouseMove);
-        overlay.removeEventListener('mouseup', onMouseUp);
-
+        overlay.removeEventListener('mousedown', onDown);
+        overlay.removeEventListener('mousemove', onMove);
+        overlay.removeEventListener('mouseup', onUp);
         if (w < 10 || h < 10) return;
 
-        // 원본 비율로 크롭
-        const scaleX = sourceCanvas.width / window.innerWidth;
-        const scaleY = sourceCanvas.height / window.innerHeight;
+        const sx = sourceCanvas.width / window.innerWidth;
+        const sy = sourceCanvas.height / window.innerHeight;
+        const crop = document.createElement('canvas');
+        crop.width = w * sx; crop.height = h * sy;
+        crop.getContext('2d').drawImage(sourceCanvas, x*sx, y*sy, w*sx, h*sy, 0, 0, crop.width, crop.height);
 
-        const cropCanvas2 = document.createElement('canvas');
-        cropCanvas2.width = w * scaleX;
-        cropCanvas2.height = h * scaleY;
-        cropCanvas2.getContext('2d').drawImage(
-            sourceCanvas,
-            x * scaleX, y * scaleY, w * scaleX, h * scaleY,
-            0, 0, cropCanvas2.width, cropCanvas2.height
-        );
-
-        canvas.width = cropCanvas2.width;
-        canvas.height = cropCanvas2.height;
-        canvas.getContext('2d').drawImage(cropCanvas2, 0, 0);
+        canvas.width = crop.width; canvas.height = crop.height;
+        canvas.getContext('2d').drawImage(crop, 0, 0);
         preview.style.display = 'block';
         processImage(canvas);
     }
 
-    overlay.addEventListener('mousedown', onMouseDown);
-    overlay.addEventListener('mousemove', onMouseMove);
-    overlay.addEventListener('mouseup', onMouseUp);
+    overlay.addEventListener('mousedown', onDown);
+    overlay.addEventListener('mousemove', onMove);
+    overlay.addEventListener('mouseup', onUp);
 }
-
 
 // OCR 언어 매핑
 function getOcrLang(lang) {
-    const map = {
-        'auto': 'eng+jpn+chi_sim+kor',
-        'en': 'eng',
-        'ja': 'jpn',
-        'zh-CN': 'chi_sim',
-        'zh-TW': 'chi_tra',
-        'fr': 'fra',
-        'de': 'deu',
-        'es': 'spa',
-        'pt': 'por',
-        'ru': 'rus',
-        'vi': 'vie',
-        'th': 'tha'
-    };
+    const map = { 'auto':'eng+jpn+chi_sim', 'en':'eng', 'ja':'jpn', 'zh-CN':'chi_sim',
+        'zh-TW':'chi_tra', 'fr':'fra', 'de':'deu', 'es':'spa', 'ru':'rus', 'vi':'vie', 'th':'tha' };
     return map[lang] || 'eng';
 }
 
 async function processImage(canvasEl) {
     loading.style.display = 'block';
-    loadingText.textContent = '텍스트 인식 중... (처음엔 모델 다운로드로 시간이 걸릴 수 있습니다)';
+    loadingText.textContent = '텍스트 인식 중...';
     result.style.display = 'none';
 
-    const sourceLang = sourceLangSelect.value;
-    const ocrLang = getOcrLang(sourceLang);
-
     try {
-        const { data: { text } } = await Tesseract.recognize(canvasEl, ocrLang, {
-            logger: (m) => {
-                if (m.status === 'recognizing text') {
-                    const pct = Math.round((m.progress || 0) * 100);
-                    loadingText.textContent = `텍스트 인식 중... ${pct}%`;
-                }
+        const { data: { text } } = await Tesseract.recognize(canvasEl, getOcrLang(sourceLang.value), {
+            logger: m => {
+                if (m.status === 'recognizing text')
+                    loadingText.textContent = '텍스트 인식 중... ' + Math.round((m.progress||0)*100) + '%';
             }
         });
-
         const cleaned = text.trim();
-        if (!cleaned) {
-            loading.style.display = 'none';
-            alert('이미지에서 텍스트를 인식하지 못했습니다. 더 선명한 이미지를 사용해주세요.');
-            return;
-        }
-
-        originalText.textContent = cleaned;
-        loadingText.textContent = '한국어로 번역 중...';
-
-        const res = await fetch('/api/translate', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: cleaned, sourceLang: sourceLang })
-        });
-
-        const data = await res.json();
-
-        loading.style.display = 'none';
-        result.style.display = 'block';
-
-        if (data.error) {
-            translatedText.textContent = '번역 오류: ' + data.error;
-        } else {
-            translatedText.textContent = data.translated;
-        }
+        if (!cleaned) { loading.style.display = 'none'; alert('텍스트를 인식하지 못했습니다.'); return; }
+        loadingText.textContent = '번역 중...';
+        doTranslate(cleaned);
     } catch (err) {
         loading.style.display = 'none';
-        alert('처리 중 오류가 발생했습니다: ' + err.message);
+        alert('OCR 실패: ' + err.message);
     }
 }
