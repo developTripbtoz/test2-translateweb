@@ -1,0 +1,13 @@
+{
+  "enabled": true,
+  "name": "서버 시작/중지",
+  "description": "사용자가 \"서버 시작해줘\" 또는 \"서버 중지해줘\"라고 하면 App Runner 서비스를 resume/pause 합니다.",
+  "version": "1",
+  "when": {
+    "type": "promptSubmit"
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "사용자 메시지에 \"서버 시작\", \"서버 켜\", \"서버 올려\", \"resume\" 키워드가 있으면 `bash scripts/server-control.sh start` 를 실행하세요. \"서버 중지\", \"서버 꺼\", \"서버 내려\", \"서버 멈춰\", \"pause\" 키워드가 있으면 `bash scripts/server-control.sh stop` 을 실행하세요. 해당 키워드가 없으면 아무것도 하지 마세요."
+  }
+}

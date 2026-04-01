@@ -1,17 +1,56 @@
+# ============================================
+# App Runner 설정 파일
+# 지원 런타임: python311, nodejs22, corretto8, corretto11
+# 사용할 언어에 맞게 수정하세요
+# ============================================
+
 version: 1.0
-runtime: corretto11
+runtime: python311
 
 build:
   commands:
     pre-build:
-      - java --version
-    build:
-      - ./gradlew build -x test
+      - python3 --version
 
 run:
-  command: java -jar build/libs/app.jar
+  pre-run:
+    - pip3 install --upgrade pip
+    - pip3 install -r requirements.txt
+  command: gunicorn --bind 0.0.0.0:5000 --timeout 300 app:app
   network:
     port: 5000
-  env:
-    - name: SERVER_PORT
-      value: "5000"
+
+# --- Node.js 22 사용 시 ---
+# version: 1.0
+# runtime: nodejs22
+#
+# build:
+#   commands:
+#     pre-build:
+#       - node --version
+#
+# run:
+#   pre-run:
+#     - npm install
+#   command: node app.js
+#   network:
+#     port: 5000
+
+# --- Corretto 11 (Java) 사용 시 ---
+# version: 1.0
+# runtime: corretto11
+#
+# build:
+#   commands:
+#     pre-build:
+#       - java --version
+#     build:
+#       - ./gradlew build -x test
+#
+# run:
+#   command: java -jar build/libs/app.jar
+#   network:
+#     port: 5000
+#   env:
+#     - name: SERVER_PORT
+#       value: "5000"

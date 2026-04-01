@@ -1,0 +1,118 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: App Runner 오후 8시 자동 중지 (KST)
+
+Resources:
+
+  ShutdownLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: apprunner-auto-shutdown-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ShutdownPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+              - Effect: Allow
+                Action:
+                  - apprunner:ListServices
+                  - apprunner:PauseService
+                  - apprunner:DescribeService
+                  - apprunner:ListTagsForResource
+                Resource: '*'
+
+  ShutdownFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: apprunner-auto-shutdown
+      Runtime: python3.11
+      Handler: index.handler
+      Timeout: 120
+      MemorySize: 128
+      Role: !GetAtt ShutdownLambdaRole.Arn
+      Code:
+        ZipFile: |
+          import boto3
+
+          apprunner = boto3.client('apprunner')
+
+          def handler(event, context):
+              next_token = None
+              paused = []
+              skipped = []
+
+              while True:
+                  params = {}
+                  if next_token:
+                      params['NextToken'] = next_token
+                  resp = apprunner.list_services(**params)
+
+                  for svc in resp.get('ServiceSummaryList', []):
+                      arn = svc['ServiceArn']
+                      name = svc['ServiceName']
+                      status = svc.get('Status', '')
+
+                      if status != 'RUNNING':
+                          continue
+
+                      # SkipShutdown 태그 확인
+                      try:
+                          tags_resp = apprunner.list_tags_for_resource(ResourceArn=arn)
+                          tags = {t['Key']: t['Value'] for t in tags_resp.get('Tags', [])}
+                          if tags.get('SkipShutdown', '').lower() == 'true':
+                              skipped.append(name)
+                              print(f'Skipped (SkipShutdown=true): {name}')
+                              continue
+                      except Exception as e:
+                          print(f'Tag check failed for {name}: {e}')
+
+                      try:
+                          apprunner.pause_service(ServiceArn=arn)
+                          paused.append(name)
+                          print(f'Paused: {name}')
+                      except Exception as e:
+                          print(f'Failed to pause {name}: {e}')
+
+                  next_token = resp.get('NextToken')
+                  if not next_token:
+                      break
+
+              print(f'Total paused: {len(paused)}, skipped: {len(skipped)}')
+              return {'paused': paused, 'skipped': skipped}
+
+  ShutdownPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ShutdownFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ShutdownSchedule.Arn
+
+  # 매일 오후 8시 KST = UTC 11:00
+  ShutdownSchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: apprunner-daily-shutdown
+      Description: 매일 오후 8시(KST) 모든 App Runner 서비스 중지
+      ScheduleExpression: cron(0 11 * * ? *)
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt ShutdownFunction.Arn
+          Id: ShutdownTarget
+
+Outputs:
+  ShutdownFunctionArn:
+    Description: 자동 중지 Lambda ARN
+    Value: !GetAtt ShutdownFunction.Arn

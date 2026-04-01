@@ -135,17 +135,45 @@ Resources:
 
               status_upper = status.upper()
 
-              if any(k in status_upper for k in ['STARTED', 'IN_PROGRESS', 'INPROGRESS']):
-                  subject = f'[배포 시작] {service_name}'
+              # 서비스 일시정지 완료
+              if 'PAUSE' in status_upper and any(k in status_upper for k in ['COMPLETED', 'SUCCEEDED']):
+                  subject = f'[서버 중지 완료] {service_name}'
                   body = (
-                      f'App Runner 배포가 시작되었습니다.\n\n'
+                      f'App Runner 서비스가 중지되었습니다.\n\n'
                       f'서비스: {service_name}\n'
                       f'서비스 URL: https://{service_url}\n'
-                      f'Operation ID: {operation_id}\n'
-                      f'시작 시간: {now}\n'
+                      f'완료 시간: {now}\n'
+                      f'상태: PAUSED (비용 절감 중)\n'
+                      f'\n시작하려면 Kiro에서 "서버 시작해줘"를 입력하세요.\n'
                   )
                   send_email(recipient, subject, body)
 
+              # 서비스 재개 완료
+              elif 'RESUME' in status_upper and any(k in status_upper for k in ['COMPLETED', 'SUCCEEDED']):
+                  subject = f'[서버 시작 완료] {service_name}'
+                  body = (
+                      f'App Runner 서비스가 시작되었습니다.\n\n'
+                      f'서비스: {service_name}\n'
+                      f'서비스 URL: https://{service_url}\n'
+                      f'완료 시간: {now}\n'
+                      f'상태: RUNNING\n'
+                  )
+                  send_email(recipient, subject, body)
+
+              # 배포 시작
+              elif any(k in status_upper for k in ['STARTED', 'IN_PROGRESS', 'INPROGRESS']):
+                  if 'PAUSE' not in status_upper and 'RESUME' not in status_upper:
+                      subject = f'[배포 시작] {service_name}'
+                      body = (
+                          f'App Runner 배포가 시작되었습니다.\n\n'
+                          f'서비스: {service_name}\n'
+                          f'서비스 URL: https://{service_url}\n'
+                          f'Operation ID: {operation_id}\n'
+                          f'시작 시간: {now}\n'
+                      )
+                      send_email(recipient, subject, body)
+
+              # 배포 완료/실패
               elif any(k in status_upper for k in ['SUCCEEDED', 'FAILED', 'COMPLETED']):
                   is_success = 'FAIL' not in status_upper and 'ERROR' not in status_upper
                   result_text = '성공' if is_success else '실패'
