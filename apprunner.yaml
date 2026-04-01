@@ -1,14 +1,15 @@
 version: 1.0
-runtime: nodejs22
+runtime: python311
 
 build:
   commands:
     pre-build:
-      - node --version
+      - python3 --version
 
 run:
   pre-run:
-    - npm install
-  command: node app.js
+    - pip3 install --upgrade pip
+    - pip3 install -r requirements.txt
+  command: gunicorn --bind 0.0.0.0:5000 --timeout 300 app:app
   network:
     port: 5000
